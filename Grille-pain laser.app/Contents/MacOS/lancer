@@ -1,0 +1,26 @@
+#!/bin/bash
+# Ouvre grille-pain.html dans Chrome en mode application (fenêtre sans barre d'adresse).
+# Le fichier HTML est cherché dans « Ressources - NE PAS HACKER SVP », à côté du .app, pour que le dossier Laser reste déplaçable.
+DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+HTML="$DIR/Ressources - NE PAS HACKER SVP/grille-pain.html"
+if [ ! -f "$HTML" ]; then osascript -e 'display alert "Grille-pain laser" message "grille-pain.html introuvable dans Ressources - NE PAS HACKER SVP."'; exit 1; fi
+URL="file://$(osascript -l JavaScript -e 'function run(a){return encodeURI(a[0])}' "$HTML")" # osascript : toujours là sur macOS (python3 peut manquer sur un Mac neuf)
+# Écran utile (sans la barre des menus ni le Dock) de l'écran où l'on travaille, en coordonnées de Chrome (origine en haut à gauche de l'écran principal).
+# Chrome déjà ouvert ignore ces deux options : la page agrandit alors sa fenêtre elle-même (agrandirFenetre).
+CADRE="$(osascript -l JavaScript -e 'ObjC.import("AppKit"); const f = $.NSScreen.mainScreen.visibleFrame, h = $.NSScreen.screens.objectAtIndex(0).frame.size.height; [f.origin.x, h - f.origin.y - f.size.height, f.size.width, f.size.height].map(Math.round).join(",")' 2>/dev/null)"
+IFS=, read -r X Y W H <<< "$CADRE"
+if [ -n "$H" ]; then open -na "Google Chrome" --args --app="$URL" --window-position="$X,$Y" --window-size="$W,$H"
+else open -na "Google Chrome" --args --app="$URL" --window-size=1440,900; fi
+# Anti-veille pendant une gravure : la page appelle http://127.0.0.1:47615/ toutes les 20 s tant qu'elle grave (PORT_EVEIL),
+# même fenêtre cachée ou couverte (Chrome lâche alors son Wake Lock). Chaque appel tient le Mac éveillé, écran allumé, 90 s :
+# gravure finie, plus d'appel, le Mac se met en veille comme d'habitude. Un seul guet à la fois ; il s'arrête avec Chrome.
+if ! lsof -nP -iTCP:47615 -sTCP:LISTEN >/dev/null 2>&1; then
+  nohup /bin/bash -c '
+    for i in $(seq 30); do pgrep -xq "Google Chrome" && break; sleep 1; done
+    ( while pgrep -xq "Google Chrome"; do sleep 60; done; pkill -f "nc -l 127.0.0.1 47615" ) &
+    C=""
+    while pgrep -xq "Google Chrome"; do
+      printf "HTTP/1.0 204 No Content\r\n\r\n" | nc -l 127.0.0.1 47615 >/dev/null 2>&1 || break
+      kill $C 2>/dev/null; caffeinate -dis -t 90 & C=$!
+    done' >/dev/null 2>&1 &
+fi
